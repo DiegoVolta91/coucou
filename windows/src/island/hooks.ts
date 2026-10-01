@@ -45,20 +45,20 @@ function lastPathComponent(p: string): string {
 
 /** frenchStep() — same labels as the macOS app. */
 const TOOL_LABELS: Record<string, string> = {
-  Bash: "Exécute",
-  Read: "Lit",
-  Write: "Écrit",
-  Edit: "Modifie",
-  Glob: "Cherche",
-  Grep: "Recherche",
-  WebSearch: "Recherche web",
-  WebFetch: "Récupère",
-  TodoWrite: "Tâches",
-  Task: "Agent",
-  LS: "Liste",
-  MultiEdit: "Modifie",
+  Bash: "Ejecuta",
+  Read: "Lee",
+  Write: "Escribe",
+  Edit: "Edita",
+  Glob: "Busca",
+  Grep: "Busca",
+  WebSearch: "Búsqueda web",
+  WebFetch: "Descarga",
+  TodoWrite: "Tareas",
+  Task: "Agente",
+  LS: "Lista",
+  MultiEdit: "Edita",
   NotebookEdit: "Notebook",
-  PowerShell: "Exécute",
+  PowerShell: "Ejecuta",
 };
 
 function stepLabel(tool: string, input: Record<string, unknown>): string {
@@ -181,7 +181,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "PostToolUseFailure":
       State.updateTask(CLAUDE_ID, "working");
-      State.appendStep(CLAUDE_ID, "⚠ failed");
+      State.appendStep(CLAUDE_ID, "⚠ falló");
       break;
 
     case "Notification": {
@@ -227,14 +227,14 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SubagentStart":
-      State.appendStep(CLAUDE_ID, "+ subagent");
+      State.appendStep(CLAUDE_ID, "+ subagente");
       break;
 
     case "SubagentStop":
       // It arrives right after Stop; appending would bury the session summary
       // that the finished card shows as its title.
       if (State.tasks.find((x) => x.id === CLAUDE_ID)?.state !== "finished") {
-        State.appendStep(CLAUDE_ID, "• subagent done");
+        State.appendStep(CLAUDE_ID, "• subagente listo");
       }
       break;
 
