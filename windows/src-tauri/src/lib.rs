@@ -150,9 +150,39 @@ fn open_in_vscode(path: Option<String>) -> bool {
         }
     }
     if let Some(p) = path.as_deref().filter(|p| !p.is_empty()) {
+        // No VS Code: "Open terminal" resumes the session in Windows Terminal.
+        // Explorer is only the last resort.
+        if open_claude_in_terminal(p) {
+            return true;
+        }
         let _ = Command::new("explorer").arg(p).spawn();
     }
     false
+}
+
+/// Opens Windows Terminal in `path` and resumes the folder's latest Claude Code
+/// conversation (`claude --continue`).
+///
+/// `wt.exe` is a Store execution alias, which `std::process::Command` cannot
+/// launch (os error 1920), so this goes through ShellExecute. Windows paths can't
+/// contain `"`, so quoting the folder is enough; trailing backslashes are trimmed
+/// because `\"` would otherwise escape the closing quote. `cmd /k` is what finds
+/// `claude.cmd`, since Windows Terminal starts the command line without PATHEXT.
+fn open_claude_in_terminal(path: &str) -> bool {
+    use windows::core::{w, HSTRING};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let dir = path.trim_end_matches(['\\', '/']);
+    if dir.is_empty() || dir.contains('"') {
+        return false;
+    }
+    let params = HSTRING::from(format!("-d \"{dir}\" cmd /k claude --continue"));
+    let result = unsafe {
+        ShellExecuteW(None, w!("open"), w!("wt.exe"), &params, None, SW_SHOWNORMAL)
+    };
+    // ShellExecute reports success with a value greater than 32.
+    result.0 as usize > 32
 }
 
 /// Our own `where`: walks %PATH% against %PATHEXT%, no shell involved.

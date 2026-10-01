@@ -19,6 +19,8 @@ interface HookPayload {
   session_id?: string;
   cwd?: string;
   message?: string;
+  /** Stop carries the assistant's closing text here. */
+  last_assistant_message?: string;
   /** UserPromptSubmit carries `prompt`; `message` belongs to Notification/Stop. */
   prompt?: string;
   tool_name?: string;
@@ -197,7 +199,12 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "Stop":
       State.updateTask(CLAUDE_ID, "finished");
-      if (payload.message) State.appendStep(CLAUDE_ID, payload.message.slice(0, 60));
+      {
+        // Claude Code puts the closing text in `last_assistant_message`; `message`
+        // is kept as a fallback for older versions.
+        const summary = (payload.last_assistant_message ?? payload.message ?? "").trim();
+        if (summary) State.appendStep(CLAUDE_ID, summary.split(/\r?\n/)[0].slice(0, 140));
+      }
       Sound.play("finish");
       if (focused) surface("finished", true);
       else State.setPillBadge(CLAUDE_ID, "finished");
@@ -224,7 +231,11 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SubagentStop":
-      State.appendStep(CLAUDE_ID, "• subagent done");
+      // It arrives right after Stop; appending would bury the session summary
+      // that the finished card shows as its title.
+      if (State.tasks.find((x) => x.id === CLAUDE_ID)?.state !== "finished") {
+        State.appendStep(CLAUDE_ID, "• subagent done");
+      }
       break;
 
     case "PermissionRequest": {
