@@ -161,7 +161,7 @@ fn open_in_vscode(path: Option<String>) -> bool {
 }
 
 /// Opens Windows Terminal in `path` and resumes the folder's latest Claude Code
-/// conversation (`claude --continue`).
+/// conversation (`claude --continue`), or starts a new one when there is none.
 ///
 /// `wt.exe` is a Store execution alias, which `std::process::Command` cannot
 /// launch (os error 1920), so this goes through ShellExecute. Windows paths can't
@@ -177,7 +177,9 @@ fn open_claude_in_terminal(path: &str) -> bool {
     if dir.is_empty() || dir.contains('"') {
         return false;
     }
-    let params = HSTRING::from(format!("-d \"{dir}\" cmd /k claude --continue"));
+    // `||` is cmd's, evaluated inside the quoted /k string: no conversation to
+    // continue in this folder means a fresh session instead of an empty prompt.
+    let params = HSTRING::from(format!("-d \"{dir}\" cmd /k \"claude --continue || claude\""));
     let result = unsafe {
         ShellExecuteW(None, w!("open"), w!("wt.exe"), &params, None, SW_SHOWNORMAL)
     };
