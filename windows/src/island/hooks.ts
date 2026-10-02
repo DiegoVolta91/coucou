@@ -10,8 +10,31 @@ import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
 
-/** Clears the approval card if no decision was made before the hook gave up. */
-let pendingTimeout: number | null = null;
+/** One deadline per queued permission request: past it the terminal has taken over. */
+const approvalTimers = new Map<string, number>();
+
+/** Drops a request from the queue and returns how many are still waiting. */
+export function releaseApproval(requestId: string): number {
+  const timer = approvalTimers.get(requestId);
+  if (timer != null) window.clearTimeout(timer);
+  approvalTimers.delete(requestId);
+  State.approvalQueue = State.approvalQueue.filter((a) => a.requestId !== requestId);
+  return State.approvalQueue.length;
+}
+
+/** Nobody answered in time: stop showing a card that would be lying. */
+function expireApproval(island: Island, requestId: string) {
+  approvalTimers.delete(requestId);
+  if (!State.approvalQueue.some((a) => a.requestId === requestId)) return;
+  if (releaseApproval(requestId) === 0) {
+    State.isPinned = false;
+    island.dropPin();
+    State.updateTask(CLAUDE_ID, "working");
+    State.setPillBadge(CLAUDE_ID, null);
+    if (State.view === "approval") island.setView(State.defaultView());
+  }
+  State.notify();
+}
 
 interface HookPayload {
   hook_event_name?: string;
@@ -25,6 +48,8 @@ interface HookPayload {
   prompt?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
+  /** Notification: permission_prompt, idle_prompt, elicitation_dialog… */
+  notification_type?: string;
 }
 
 const PROJECT_ALIASES: Record<string, string> = {
@@ -122,6 +147,11 @@ function clearSession() {
 const firstLine = (text: string | undefined, max: number) =>
   (text ?? "").trim().split(/\r?\n/)[0].slice(0, max);
 
+/** A notification that actually needs a human answer. */
+function isQuestion(payload: HookPayload): boolean {
+  return (payload.message ?? "").endsWith("?") || payload.notification_type === "elicitation_dialog";
+}
+
 /** Keeps the "last conversations" list the overview offers for resuming. */
 function trackSession(
   id: string,
@@ -130,7 +160,7 @@ function trackSession(
   projectName: string,
   cwd: string,
 ) {
-  const patch: Parameters<typeof State.touchSession>[1] = {};
+  const patch: Parameters<typeof State.touchSession>[1] = { note: undefined };
   if (cwd) {
     patch.cwd = cwd;
     patch.name = projectName;
@@ -145,8 +175,20 @@ function trackSession(
     case "PreToolUse":
     case "PostToolUse":
     case "PostToolUseFailure":
-    case "PermissionRequest":
       patch.status = "working";
+      break;
+    case "PermissionRequest":
+      patch.status = "waiting";
+      patch.note = "Pide permiso";
+      break;
+    case "Notification":
+      if (isQuestion(payload)) {
+        patch.status = "waiting";
+        patch.note = "Espera tu respuesta";
+      } else {
+        // Not a reason to change what the conversation is doing.
+        return;
+      }
       break;
     case "Stop": {
       patch.status = "finished";
@@ -237,6 +279,7 @@ function handleHook(island: Island, payload: HookPayload) {
     case "UserPromptSubmit": {
       upsert(projectName, cwd);
       State.updateTask(CLAUDE_ID, "thinking");
+      State.setPillBadge(CLAUDE_ID, null);
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
       if (asked) State.appendStep(CLAUDE_ID, asked.slice(0, 60));
@@ -268,9 +311,17 @@ function handleHook(island: Island, payload: HookPayload) {
       if (lower.includes("rate limit") || lower.includes("limite d")) {
         State.updateTask(CLAUDE_ID, "ratelimit");
         Sound.play("rate");
-      } else if (message.endsWith("?")) {
+      } else if (isQuestion(payload)) {
         State.updateTask(CLAUDE_ID, "question");
         State.appendStep(CLAUDE_ID, message);
+        Sound.play("question");
+        // Same rule as a finished session: the focused agent opens the card, any
+        // other one raises its badge and wakes the island so it can be seen.
+        if (focused) surface("question", true);
+        else {
+          State.setPillBadge(CLAUDE_ID, "approval");
+          island.reveal();
+        }
       }
       break;
     }
@@ -318,26 +369,32 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "PermissionRequest": {
       const requestId = payload.request_id ?? "";
-      // One card, one request. A second one must never quietly replace the first
-      // — that would leave a human staring at request B while request A waits for
-      // a decision nobody can give. Hand it straight back to the terminal.
-      if (State.pendingApproval && State.pendingApproval.requestId !== requestId) {
-        if (requestId) void Bridge.approvalDecline(requestId);
-        break;
-      }
+      // Requests queue up instead of being sent back to the terminal. The head is
+      // the card on screen; each one keeps its own deadline, because the relay
+      // gives up on it 110 s after it arrived, whether or not it was ever shown.
+      if (State.approvalQueue.some((a) => a.requestId === requestId)) break;
       upsert(projectName, cwd);
-      if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
       const tool = payload.tool_name ?? "Tool";
       const input = payload.tool_input ?? {};
-      State.pendingApproval = {
+      State.approvalQueue.push({
         requestId,
         sessionId: payload.session_id ?? "",
         tool,
         command: approvalTarget(tool, input),
-      };
-      // The relay's short ack window closes in 800 ms; everything below this
-      // line is synchronous, so the card really is up by the time it lands.
+        project: projectName,
+      });
+      // The relay's short ack window closes in 800 ms; the request is in the
+      // queue by now, so a human can act on it.
       if (requestId) void Bridge.approvalAck(requestId);
+      approvalTimers.set(
+        requestId,
+        window.setTimeout(() => expireApproval(island, requestId), 110_000),
+      );
+      if (State.approvalQueue.length > 1) {
+        // Already asking: the card just grows a "1 de N", plus a nudge.
+        Sound.play("approval");
+        break;
+      }
       State.updateTask(CLAUDE_ID, "approval");
       State.isPinned = true;
       Sound.play("approval");
@@ -350,22 +407,8 @@ function handleHook(island: Island, payload: HookPayload) {
         State.setPillBadge(CLAUDE_ID, "approval");
         island.reveal();
       }
-      // Coucou answers within 108 s or not at all; after that the terminal has
-      // taken over and the card would be lying.
-      pendingTimeout = window.setTimeout(() => {
-        pendingTimeout = null;
-        if (!State.pendingApproval) return;
-        State.pendingApproval = null;
-        State.isPinned = false;
-        island.dropPin();
-        State.updateTask(CLAUDE_ID, "working");
-        State.setPillBadge(CLAUDE_ID, null);
-        if (State.view === "approval") island.setView(State.defaultView());
-        State.notify();
-      }, 110_000);
       break;
     }
-
     default:
       break;
   }

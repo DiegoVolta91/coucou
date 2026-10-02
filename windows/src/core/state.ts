@@ -28,9 +28,11 @@ export interface SessionInfo {
   id: string;
   name: string;
   cwd: string;
-  status: "working" | "finished" | "ended";
+  status: "working" | "finished" | "ended" | "waiting";
   /** Latest prompt while it works, the closing summary once it stops. */
   detail: string;
+  /** Why it is waiting for you ("Pide permiso"…); only set while `waiting`. */
+  note?: string;
   lastSeen: number;
 }
 
@@ -51,6 +53,8 @@ export interface ApprovalInfo {
   sessionId: string;
   tool: string;
   command: string;
+  /** Project the request comes from, so a queued card says whose it is. */
+  project: string;
 }
 
 export interface ChatMessage {
@@ -161,7 +165,8 @@ class AppState {
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
-  pendingApproval: ApprovalInfo | null = null;
+  /** Permission requests waiting for a click, oldest first; the head is on screen. */
+  approvalQueue: ApprovalInfo[] = [];
 
   integrations: Record<string, IntegrationInfo> = {};
 
@@ -177,6 +182,10 @@ class AppState {
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  get pendingApproval(): ApprovalInfo | null {
+    return this.approvalQueue[0] ?? null;
   }
 
   /** Creates or updates a conversation and keeps only the most recent ones. */
@@ -200,14 +209,16 @@ class AppState {
     for (const f of found) {
       const s = this.sessions.find((x) => x.id === f.id);
       if (!s) this.sessions.push({ ...f });
-      else if (f.lastSeen > s.lastSeen) Object.assign(s, f);
+      else if (f.lastSeen > s.lastSeen) Object.assign(s, { note: undefined }, f);
       else if (!s.cwd) Object.assign(s, { cwd: f.cwd, name: f.name });
     }
     this.commitSessions(before);
   }
 
   private commitSessions(unchangedFrom?: string) {
-    this.sessions.sort((a, b) => b.lastSeen - a.lastSeen);
+    // A conversation waiting for you always makes the cut, whatever its age.
+    const waiting = (s: SessionInfo) => (s.status === "waiting" ? 1 : 0);
+    this.sessions.sort((a, b) => waiting(b) - waiting(a) || b.lastSeen - a.lastSeen);
     this.sessions.length = Math.min(this.sessions.length, MAX_SESSIONS);
     const now = JSON.stringify(this.sessions);
     if (now === unchangedFrom) return;

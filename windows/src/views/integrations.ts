@@ -44,7 +44,12 @@ function arr(id: string, key: string): Record<string, unknown>[] {
 
 // ── Recent Claude Code conversations ──────────────────────────────────────────
 
-const SESSION_COLORS = { working: "#F5A524", finished: "#22C55E", ended: "#6B7079" } as const;
+const SESSION_COLORS = {
+  working: "#F5A524",
+  finished: "#22C55E",
+  ended: "#6B7079",
+  waiting: "#38BDF8",
+} as const;
 
 /** The last conversations, one click away from being reopened in the Claude app. */
 export function sessionsCard(): HTMLElement {
@@ -54,7 +59,7 @@ export function sessionsCard(): HTMLElement {
       SESSION_COLORS[s.status],
       i === 0,
       h("span", { class: "int-name", text: s.name || "Sesión" }),
-      h("span", { class: "int-sub", text: s.detail }),
+      h("span", { class: s.status === "waiting" ? "int-sub waiting" : "int-sub", text: s.note ?? s.detail }),
       h("span", { class: "int-ago", text: timeAgo(s.lastSeen) }),
     );
     row.classList.add("sess-row");

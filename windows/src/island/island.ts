@@ -19,6 +19,7 @@ import { USC, UploadSeq } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
+import { releaseApproval } from "./hooks";
 
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -117,13 +118,15 @@ export class Island {
       },
       openSession: (kind) => {
         const task = State.focusTask;
-        const id = task?.sessionId ?? null;
+        // The conversation that is waiting for you, else the one that spoke last.
+        const waiting = State.sessions.find((s) => s.status === "waiting");
+        const id = waiting?.id ?? task?.sessionId ?? null;
         // No session id (or the link could not be launched): the terminal it is.
-        if (kind === "resume" && !id) {
+        if (!id && kind === "resume") {
           void Bridge.openInVSCode(task?.sessionCwd ?? null);
           return;
         }
-        void Bridge.openClaudeSession(id, kind).then((ok) => {
+        void Bridge.openClaudeSession(id, id ? "resume" : kind).then((ok) => {
           if (!ok) void Bridge.openInVSCode(task?.sessionCwd ?? null);
         });
       },
@@ -152,7 +155,11 @@ export class Island {
         if (!req) return;
         Sound.play(d === "deny" ? "blip" : "approve");
         void Bridge.approvalDecision(req.requestId, d);
-        State.pendingApproval = null;
+        // More requests queued: the next one takes the card, nothing else moves.
+        if (releaseApproval(req.requestId) > 0) {
+          State.notify();
+          return;
+        }
         State.isPinned = false;
         this.fsm.pinned = false;
         State.updateTask("integration_claude", "working");

@@ -1155,6 +1155,11 @@ input[type="range"]::-webkit-slider-thumb {
   flex: 1 1 auto;
 }
 
+.sess-row .int-sub.waiting {
+  color: #38bdf8;
+  font-weight: 600;
+}
+
 .int-row.first .int-name {
   color: #c5c8cd;
 }

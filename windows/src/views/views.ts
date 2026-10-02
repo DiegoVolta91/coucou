@@ -326,7 +326,13 @@ function buildApproval(actions: ViewActions): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "necesita permiso"));
+      const req = State.pendingApproval;
+      const queued = State.approvalQueue.length;
+      // Whose request this is matters once several sessions can be waiting.
+      const owner = State.focusTask && req?.project
+        ? { ...State.focusTask, name: req.project }
+        : State.focusTask;
+      who.append(agentWho(owner, queued > 1 ? `necesita permiso · 1 de ${queued}` : "necesita permiso"));
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
       // name of the tool asking.
