@@ -187,10 +187,32 @@ class AppState {
       this.sessions.push(s);
     }
     Object.assign(s, patch, { lastSeen: Date.now() });
+    this.commitSessions();
+  }
+
+  /**
+   * Folds in conversations read from disk. A hook event that is newer than what
+   * the transcript shows wins, so live information is never overwritten by a
+   * file that has not caught up yet.
+   */
+  mergeSessions(found: SessionInfo[]) {
+    const before = JSON.stringify(this.sessions);
+    for (const f of found) {
+      const s = this.sessions.find((x) => x.id === f.id);
+      if (!s) this.sessions.push({ ...f });
+      else if (f.lastSeen > s.lastSeen) Object.assign(s, f);
+      else if (!s.cwd) Object.assign(s, { cwd: f.cwd, name: f.name });
+    }
+    this.commitSessions(before);
+  }
+
+  private commitSessions(unchangedFrom?: string) {
     this.sessions.sort((a, b) => b.lastSeen - a.lastSeen);
     this.sessions.length = Math.min(this.sessions.length, MAX_SESSIONS);
+    const now = JSON.stringify(this.sessions);
+    if (now === unchangedFrom) return;
     try {
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions));
+      localStorage.setItem(SESSIONS_KEY, now);
     } catch {
       /* storage can be unavailable; the list just won't survive a restart */
     }

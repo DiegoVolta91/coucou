@@ -161,7 +161,37 @@ function trackSession(
   State.touchSession(id, patch);
 }
 
+const SESSION_REFRESH_MS = 15_000;
+let lastSessionRefresh = 0;
+
+/**
+ * Fills the conversations list from the transcripts on disk: at startup, and
+ * while the overview is on screen. Throttled, so calling it every frame is fine.
+ */
+export async function refreshSessions(force = false) {
+  const now = Date.now();
+  if (!force && now - lastSessionRefresh < SESSION_REFRESH_MS) return;
+  lastSessionRefresh = now;
+  try {
+    const found = await Bridge.recentSessions(2);
+    if (!found) return;
+    State.mergeSessions(
+      found.map((s) => ({
+        id: s.id,
+        cwd: s.cwd,
+        name: aliasProjectName(lastPathComponent(s.cwd) || "Session"),
+        status: s.status,
+        detail: s.detail,
+        lastSeen: s.lastSeen,
+      })),
+    );
+  } catch {
+    /* outside Coucou, or the transcripts are not there: the list stays as it is */
+  }
+}
+
 export function registerHookHandlers(island: Island) {
+  void refreshSessions(true);
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
 }
 

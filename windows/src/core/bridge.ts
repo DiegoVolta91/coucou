@@ -61,6 +61,10 @@ export const Bridge = {
   openClaudeSession: (sessionId: string | null, kind: "resume" | "needs-input") =>
     call<boolean>("open_claude_session", { sessionId, kind }),
 
+  /** Latest Claude Code conversations, read from its transcripts on disk. */
+  recentSessions: (limit: number) =>
+    call<RecentSessionDto[]>("recent_sessions", { limit }),
+
   quit: () => call<void>("quit_app"),
 
   openSettingsWindow: () => call<void>("open_settings_window"),
@@ -122,6 +126,14 @@ export interface DroppedFile {
   name: string;
   path: string;
   size: number;
+}
+
+export interface RecentSessionDto {
+  id: string;
+  cwd: string;
+  status: "working" | "finished";
+  detail: string;
+  lastSeen: number;
 }
 
 export interface HookStatus {

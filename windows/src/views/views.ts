@@ -11,6 +11,7 @@ import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, sessionsCard, type IntegrationCardHooks } from "./integrations";
+import { refreshSessions } from "../island/hooks";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -165,6 +166,8 @@ function buildOverview(actions: ViewActions): ViewHost {
     el,
     tick(nowMs: number) {
       if (mode === "ticker") ticker.tick(nowMs);
+      // Picks up conversations started elsewhere while the overview is open.
+      void refreshSessions();
       // The "hace 3 min" labels only move if something re-renders them.
       const minute = Math.floor(Date.now() / 60000);
       if (minute !== lastMinute) {

@@ -8,6 +8,7 @@ mod island;
 mod log;
 mod pipe;
 mod secrets;
+mod sessions;
 mod settings;
 mod tray;
 mod win_user;
@@ -156,6 +157,16 @@ fn open_claude_session(session_id: Option<String>, kind: String) -> bool {
     };
     // ShellExecute reports success with a value greater than 32.
     result.0 as usize > 32
+}
+
+/// The most recent Claude Code conversations, read from its transcripts, so the
+/// overview card is filled before any hook event arrives.
+#[tauri::command]
+async fn recent_sessions(limit: Option<usize>) -> Vec<sessions::RecentSession> {
+    let limit = limit.unwrap_or(2).clamp(1, 10);
+    tauri::async_runtime::spawn_blocking(move || sessions::recent(limit))
+        .await
+        .unwrap_or_default()
 }
 
 /// 8-4-4-4-12 hex, the shape of a Claude Code session id.
@@ -457,6 +468,7 @@ pub fn run() {
             open_url,
             open_in_vscode,
             open_claude_session,
+            recent_sessions,
             quit_app,
             hooks_status,
             hooks_preview,
