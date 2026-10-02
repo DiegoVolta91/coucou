@@ -42,6 +42,33 @@ function arr(id: string, key: string): Record<string, unknown>[] {
   return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
 }
 
+// ── Recent Claude Code conversations ──────────────────────────────────────────
+
+const SESSION_COLORS = { working: "#F5A524", finished: "#22C55E", ended: "#6B7079" } as const;
+
+/** The last conversations, one click away from being reopened in the Claude app. */
+export function sessionsCard(): HTMLElement {
+  const rows = h("div", { class: "int-rows" });
+  State.sessions.forEach((s, i) => {
+    const row = listRow(
+      SESSION_COLORS[s.status],
+      i === 0,
+      h("span", { class: "int-name", text: s.name || "Sesión" }),
+      h("span", { class: "int-sub", text: s.detail }),
+      h("span", { class: "int-ago", text: timeAgo(s.lastSeen) }),
+    );
+    row.classList.add("sess-row");
+    row.title = "Abrir conversación";
+    row.addEventListener("click", () => {
+      void Bridge.openClaudeSession(s.id, "resume").then((ok) => {
+        if (!ok) void Bridge.openInVSCode(s.cwd || null);
+      });
+    });
+    rows.append(row);
+  });
+  return h("div", { class: "int-card" }, header("#F5F6F8", "VS Code", "Conversaciones"), rows);
+}
+
 // ── Not configured / idle ─────────────────────────────────────────────────────
 
 const OPEN_URLS: Record<string, string> = {

@@ -19,6 +19,31 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** Claude Code's session id, from the hook payload; used to open the conversation. */
+  sessionId?: string | null;
+}
+
+/** A Claude Code conversation the island has seen, kept so it can be reopened. */
+export interface SessionInfo {
+  id: string;
+  name: string;
+  cwd: string;
+  status: "working" | "finished" | "ended";
+  /** Latest prompt while it works, the closing summary once it stops. */
+  detail: string;
+  lastSeen: number;
+}
+
+const SESSIONS_KEY = "coucou.sessions";
+const MAX_SESSIONS = 2;
+
+function loadSessions(): SessionInfo[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SESSIONS_KEY) ?? "[]");
+    return Array.isArray(raw) ? (raw as SessionInfo[]).slice(0, MAX_SESSIONS) : [];
+  } catch {
+    return [];
+  }
 }
 
 export interface ApprovalInfo {
@@ -140,6 +165,9 @@ class AppState {
 
   integrations: Record<string, IntegrationInfo> = {};
 
+  /** The most recent Claude Code conversations, newest first. */
+  sessions: SessionInfo[] = loadSessions();
+
   lastActivity = performance.now();
 
   settings: Settings = { ...DEFAULT_SETTINGS };
@@ -149,6 +177,24 @@ class AppState {
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** Creates or updates a conversation and keeps only the most recent ones. */
+  touchSession(id: string, patch: Partial<Omit<SessionInfo, "id" | "lastSeen">>) {
+    let s = this.sessions.find((x) => x.id === id);
+    if (!s) {
+      s = { id, name: "", cwd: "", status: "finished", detail: "", lastSeen: 0 };
+      this.sessions.push(s);
+    }
+    Object.assign(s, patch, { lastSeen: Date.now() });
+    this.sessions.sort((a, b) => b.lastSeen - a.lastSeen);
+    this.sessions.length = Math.min(this.sessions.length, MAX_SESSIONS);
+    try {
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(this.sessions));
+    } catch {
+      /* storage can be unavailable; the list just won't survive a restart */
+    }
+    this.notify();
   }
 
   /** Marks the UI dirty; the island re-renders on the next frame. */

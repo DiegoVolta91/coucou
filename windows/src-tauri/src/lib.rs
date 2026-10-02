@@ -132,6 +132,41 @@ fn open_url(url: String) {
         .spawn();
 }
 
+/// Opens a Claude Code conversation in the Claude desktop app through its
+/// `claude://` protocol. `resume` needs the session id (a UUID, checked here so
+/// nothing but hex and dashes ever reaches the URL); `needs-input` lists the
+/// sessions waiting for an answer. Returns false when the link was not launched,
+/// so the island can fall back to a terminal.
+#[tauri::command]
+fn open_claude_session(session_id: Option<String>, kind: String) -> bool {
+    use windows::core::{w, HSTRING};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let url = match kind.as_str() {
+        "needs-input" => "claude://code/needs-input?source=coucou".to_string(),
+        "resume" => match session_id.as_deref().filter(|id| is_uuid(id)) {
+            Some(id) => format!("claude://resume?session={id}"),
+            None => return false,
+        },
+        _ => return false,
+    };
+    let result = unsafe {
+        ShellExecuteW(None, w!("open"), &HSTRING::from(url), None, None, SW_SHOWNORMAL)
+    };
+    // ShellExecute reports success with a value greater than 32.
+    result.0 as usize > 32
+}
+
+/// 8-4-4-4-12 hex, the shape of a Claude Code session id.
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && parts.iter().zip([8usize, 4, 4, 4, 12]).all(|(p, n)| {
+            p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit())
+        })
+}
+
 /// "Open terminal" opens the working folder in VS Code when `code` is on PATH,
 /// and falls back to Explorer otherwise.
 #[tauri::command]
@@ -421,6 +456,7 @@ pub fn run() {
             reposition,
             open_url,
             open_in_vscode,
+            open_claude_session,
             quit_app,
             hooks_status,
             hooks_preview,

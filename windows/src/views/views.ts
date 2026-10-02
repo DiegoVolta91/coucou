@@ -10,13 +10,15 @@ import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
-import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
+import { renderIntegrationCard, sessionsCard, type IntegrationCardHooks } from "./integrations";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
   collapse(): void;
   setFocus(id: string): void;
   openTerminal(): void;
+  /** Opens the focused Claude Code conversation in the Claude app (terminal as fallback). */
+  openSession(kind: "resume" | "needs-input"): void;
   /** The ↗ button: opens whatever the focused pill points at. */
   openTarget(): void;
   openUrl(url: string): void;
@@ -140,6 +142,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   let lastFocus: string | null = null;
   let mode: "ticker" | "card" | null = null;
   let cardKey = "";
+  let lastMinute = Math.floor(Date.now() / 60000);
 
   const hooks: IntegrationCardHooks = {
     get detailOpen() {
@@ -162,6 +165,12 @@ function buildOverview(actions: ViewActions): ViewHost {
     el,
     tick(nowMs: number) {
       if (mode === "ticker") ticker.tick(nowMs);
+      // The "hace 3 min" labels only move if something re-renders them.
+      const minute = Math.floor(Date.now() / 60000);
+      if (minute !== lastMinute) {
+        lastMinute = minute;
+        if (mode === "card" && State.sessions.length > 0) State.notify();
+      }
     },
     sync() {
       const task = State.focusTask;
@@ -174,10 +183,26 @@ function buildOverview(actions: ViewActions): ViewHost {
 
       // VS Code with a live Claude Code session keeps the ticker; every other
       // pill shows its own card, exactly like IntegrationCardView.
+      const isClaude = task?.id === "integration_claude";
+      const liveWork = isClaude && task.state !== "idle" && task.state !== "finished";
+      // Nothing running: offer the last conversations instead of an empty ticker.
+      const showSessions = isClaude && !liveWork && State.sessions.length > 0;
       const sessionActive =
-        task?.id === "integration_claude" && (task.state !== "idle" || task.steps.length > 0);
+        isClaude && (task.state !== "idle" || task.steps.length > 0) && !showSessions;
 
-      if (task && sessionActive) {
+      if (task && showSessions) {
+        const key = [
+          "sessions", detailOpen,
+          State.sessions.map((s) => `${s.id}:${s.status}:${s.detail}:${s.lastSeen}`).join("|"),
+          Math.floor(Date.now() / 60000),
+        ].join("~");
+        if (key !== cardKey) {
+          cardKey = key;
+          mode = "card";
+          clear(leftBody);
+          leftBody.append(sessionsCard());
+        }
+      } else if (task && sessionActive) {
         if (mode !== "ticker") {
           clear(leftBody);
           leftBody.append(tickerBody);
@@ -319,7 +344,7 @@ function buildApproval(actions: ViewActions): ViewHost {
 
 // ── Question ──────────────────────────────────────────────────────────────────
 
-function buildQuestion(): ViewHost {
+function buildQuestion(actions: ViewActions): ViewHost {
   const who = h("div");
   const title = h("div", { class: "title" });
   const row = h("div", { class: "actions" });
@@ -332,7 +357,10 @@ function buildQuestion(): ViewHost {
       const task = State.focusTask;
       title.textContent = task?.steps.at(-1) ?? "Claude necesita una respuesta.";
       clear(row);
-      row.append(h("div", { class: "sub", text: "Responde en tu terminal: Coucou aún no puede responder por ti." }));
+      row.append(
+        btn("Abrir conversación", "primary", () => actions.openSession("needs-input")),
+        h("div", { class: "sub", text: "Coucou aún no puede responder por ti." }),
+      );
     },
   };
 }
@@ -366,7 +394,7 @@ function buildFinished(actions: ViewActions): ViewHost {
   const who = h("div");
   const title = h("div", { class: "title" });
   const row = h("div", { class: "actions" },
-    btn("Abrir terminal", "primary", () => actions.openTerminal()),
+    btn("Abrir conversación", "primary", () => actions.openSession("resume")),
     btn("OK", "secondary", () => actions.collapse()),
   );
   const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, row)));
@@ -491,7 +519,7 @@ export function buildViews(
   map.set("overview", buildOverview(actions));
   map.set("empty", buildEmpty(actions));
   map.set("approval", buildApproval(actions));
-  map.set("question", buildQuestion());
+  map.set("question", buildQuestion(actions));
   map.set("error", buildError(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());

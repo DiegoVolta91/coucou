@@ -115,6 +115,18 @@ export class Island {
         const cwd = State.focusTask?.sessionCwd ?? null;
         void Bridge.openInVSCode(cwd);
       },
+      openSession: (kind) => {
+        const task = State.focusTask;
+        const id = task?.sessionId ?? null;
+        // No session id (or the link could not be launched): the terminal it is.
+        if (kind === "resume" && !id) {
+          void Bridge.openInVSCode(task?.sessionCwd ?? null);
+          return;
+        }
+        void Bridge.openClaudeSession(id, kind).then((ok) => {
+          if (!ok) void Bridge.openInVSCode(task?.sessionCwd ?? null);
+        });
+      },
       // The ↗ button — same targets as openAgentTarget() on macOS.
       openTarget: () => {
         const task = State.focusTask;

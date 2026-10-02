@@ -1138,6 +1138,23 @@ input[type="range"]::-webkit-slider-thumb {
   min-width: 0;
 }
 
+.sess-row {
+  cursor: pointer;
+}
+
+.sess-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sess-row .int-name {
+  flex: 0 1 auto;
+  max-width: 42%;
+}
+
+.sess-row .int-sub {
+  flex: 1 1 auto;
+}
+
 .int-row.first .int-name {
   color: #c5c8cd;
 }

@@ -119,6 +119,48 @@ function clearSession() {
   t.pillBadge = null;
 }
 
+const firstLine = (text: string | undefined, max: number) =>
+  (text ?? "").trim().split(/\r?\n/)[0].slice(0, max);
+
+/** Keeps the "last conversations" list the overview offers for resuming. */
+function trackSession(
+  id: string,
+  event: string,
+  payload: HookPayload,
+  projectName: string,
+  cwd: string,
+) {
+  const patch: Parameters<typeof State.touchSession>[1] = {};
+  if (cwd) {
+    patch.cwd = cwd;
+    patch.name = projectName;
+  }
+  switch (event) {
+    case "UserPromptSubmit": {
+      patch.status = "working";
+      const prompt = firstLine(payload.prompt ?? payload.message, 80);
+      if (prompt) patch.detail = prompt;
+      break;
+    }
+    case "PreToolUse":
+    case "PostToolUse":
+    case "PostToolUseFailure":
+    case "PermissionRequest":
+      patch.status = "working";
+      break;
+    case "Stop": {
+      patch.status = "finished";
+      const summary = firstLine(payload.last_assistant_message ?? payload.message, 80);
+      if (summary) patch.detail = summary;
+      break;
+    }
+    case "SessionEnd":
+      patch.status = "ended";
+      break;
+  }
+  State.touchSession(id, patch);
+}
+
 export function registerHookHandlers(island: Island) {
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
 }
@@ -136,6 +178,12 @@ function handleHook(island: Island, payload: HookPayload) {
   const cwd = payload.cwd ?? "";
   const raw = lastPathComponent(cwd);
   const projectName = aliasProjectName(raw || "Session");
+
+  if (payload.session_id) {
+    const t = State.tasks.find((x) => x.id === CLAUDE_ID);
+    if (t) t.sessionId = payload.session_id;
+    trackSession(payload.session_id, name, payload, projectName, cwd);
+  }
   const focused = State.focusId === CLAUDE_ID;
 
   /** Alerts force the island open; work events only reveal the compact island. */

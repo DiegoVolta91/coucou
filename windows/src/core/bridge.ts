@@ -53,6 +53,14 @@ export const Bridge = {
   /** "Open terminal" → opens the folder in VS Code when `code` is on PATH. */
   openInVSCode: (path: string | null) => call<boolean>("open_in_vscode", { path }),
 
+  /**
+   * Opens a Claude Code conversation in the Claude desktop app (claude:// link).
+   * `resume` imports/opens the session by id; `needs-input` lists the sessions
+   * waiting for an answer. Resolves false when it could not be launched.
+   */
+  openClaudeSession: (sessionId: string | null, kind: "resume" | "needs-input") =>
+    call<boolean>("open_claude_session", { sessionId, kind }),
+
   quit: () => call<void>("quit_app"),
 
   openSettingsWindow: () => call<void>("open_settings_window"),
