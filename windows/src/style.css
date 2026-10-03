@@ -1380,3 +1380,155 @@ input[type="range"]::-webkit-slider-thumb {
 .int-card.detail {
   padding-top: 8px;
 }
+
+/* ── Projects and usage panels ──────────────────────────────────────────── */
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-top: 8px;
+  min-width: 0;
+}
+
+.panel-head b {
+  font: 600 12px var(--font);
+  color: var(--ink);
+}
+
+.panel-head span {
+  font: 400 11px var(--font);
+  color: var(--dim-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.panel-empty,
+.panel-more {
+  font: 400 11px var(--font);
+  color: var(--dim-3);
+  padding: 8px 8px 0;
+}
+
+.proj-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 5px;
+}
+
+.proj-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.proj-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.proj-name {
+  font: 500 11.5px var(--font);
+  color: #c5c8cd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.proj-branch {
+  font: 400 10px var(--font);
+  color: var(--dim-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.proj-status {
+  font: 400 10px var(--font);
+  color: var(--dim-3);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.proj-status.dirty {
+  color: #f5a524;
+}
+
+.usage-body {
+  display: flex;
+  align-items: stretch;
+  gap: 18px;
+  padding-top: 8px;
+}
+
+.usage-stats {
+  display: flex;
+  gap: 18px;
+  flex: 0 0 auto;
+}
+
+.usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.usage-label {
+  font: 400 10px var(--font);
+  color: var(--dim-3);
+}
+
+.usage-cost {
+  font: 600 20px var(--font);
+  color: var(--ink);
+}
+
+.usage-detail {
+  font: 400 10px var(--font);
+  color: var(--dim-3);
+}
+
+.usage-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 58px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 4px;
+}
+
+.usage-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  height: 100%;
+  flex: 1 1 0;
+}
+
+.usage-col span {
+  font: 400 9px var(--font);
+  color: var(--dim-3);
+}
+
+.usage-bar {
+  width: 100%;
+  max-width: 14px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.usage-bar.today {
+  background: #22c55e;
+}

@@ -2,6 +2,7 @@
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
+import type { ProjectDto, UsageDto } from "./bridge";
 
 export type AgentSource = "claudeCode" | "n8n";
 export type PillBadge = "approval" | "finished" | "error";
@@ -28,7 +29,7 @@ export interface SessionInfo {
   id: string;
   name: string;
   cwd: string;
-  status: "working" | "finished" | "ended" | "waiting";
+  status: "working" | "finished" | "ended" | "waiting" | "limit";
   /** Latest prompt while it works, the closing summary once it stops. */
   detail: string;
   /** Why it is waiting for you ("Pide permiso"…); only set while `waiting`. */
@@ -121,6 +122,8 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
+  /** Folder whose git repositories the Proyectos panel lists; empty = automatic. */
+  projectsRoot: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -135,6 +138,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  projectsRoot: "",
 };
 
 type Listener = () => void;
@@ -169,6 +173,10 @@ class AppState {
   approvalQueue: ApprovalInfo[] = [];
 
   integrations: Record<string, IntegrationInfo> = {};
+
+  /** Git repositories for the Proyectos panel, and the Uso panel's numbers. */
+  projects: ProjectDto[] = [];
+  usage: UsageDto | null = null;
 
   /** The most recent Claude Code conversations, newest first. */
   sessions: SessionInfo[] = loadSessions();
@@ -217,7 +225,7 @@ class AppState {
 
   private commitSessions(unchangedFrom?: string) {
     // A conversation waiting for you always makes the cut, whatever its age.
-    const waiting = (s: SessionInfo) => (s.status === "waiting" ? 1 : 0);
+    const waiting = (s: SessionInfo) => (s.status === "waiting" || s.status === "limit" ? 1 : 0);
     this.sessions.sort((a, b) => waiting(b) - waiting(a) || b.lastSeen - a.lastSeen);
     this.sessions.length = Math.min(this.sessions.length, MAX_SESSIONS);
     const now = JSON.stringify(this.sessions);

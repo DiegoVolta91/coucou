@@ -8,6 +8,7 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
+import { continueSession } from "../core/panels";
 
 /** Same shape as the Swift `timeAgo` computed properties. */
 export function timeAgo(value: unknown): string {
@@ -49,6 +50,7 @@ const SESSION_COLORS = {
   finished: "#22C55E",
   ended: "#6B7079",
   waiting: "#38BDF8",
+  limit: "#FB923C",
 } as const;
 
 /** The last conversations, one click away from being reopened in the Claude app. */
@@ -59,12 +61,17 @@ export function sessionsCard(): HTMLElement {
       SESSION_COLORS[s.status],
       i === 0,
       h("span", { class: "int-name", text: s.name || "Sesión" }),
-      h("span", { class: s.status === "waiting" ? "int-sub waiting" : "int-sub", text: s.note ?? s.detail }),
+      h("span", { class: s.status === "waiting" || s.status === "limit" ? "int-sub waiting" : "int-sub", text: s.note ?? s.detail }),
       h("span", { class: "int-ago", text: timeAgo(s.lastSeen) }),
     );
     row.classList.add("sess-row");
-    row.title = "Abrir conversación";
+    row.title = s.status === "limit" ? "Continuar donde se quedó" : "Abrir conversación";
     row.addEventListener("click", () => {
+      // A conversation stopped by the usage limit is picked up again, not just opened.
+      if (s.status === "limit") {
+        void continueSession(s.id, s.cwd || null);
+        return;
+      }
       void Bridge.openClaudeSession(s.id, "resume").then((ok) => {
         if (!ok) void Bridge.openInVSCode(s.cwd || null);
       });

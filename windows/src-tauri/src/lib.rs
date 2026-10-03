@@ -3,14 +3,17 @@
 mod claude;
 mod files;
 mod hooks;
+mod hotkey;
 mod integrations;
 mod island;
 mod log;
 mod pipe;
+mod projects;
 mod secrets;
 mod sessions;
 mod settings;
 mod tray;
+mod usage;
 mod win_user;
 
 use std::os::windows::process::CommandExt;
@@ -167,6 +170,86 @@ async fn recent_sessions(limit: Option<usize>) -> Vec<sessions::RecentSession> {
     tauri::async_runtime::spawn_blocking(move || sessions::recent(limit))
         .await
         .unwrap_or_default()
+}
+
+/// Git repositories in the projects folder, for the "Proyectos" panel.
+#[tauri::command]
+async fn list_projects(shared: State<'_, Shared>) -> Result<Vec<projects::Project>, String> {
+    let root = shared.settings.lock().unwrap().projects_root.clone();
+    tauri::async_runtime::spawn_blocking(move || projects::list(&root))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Token usage and estimated cost for today and the last seven days.
+#[tauri::command]
+async fn usage_summary() -> usage::UsageSummary {
+    tauri::async_runtime::spawn_blocking(usage::summary)
+        .await
+        .unwrap_or_default()
+}
+
+/// Starts a new Claude Code session in `path` through the Claude desktop app
+/// (`claude://code/new?folder=…`). Only an existing folder is ever sent.
+#[tauri::command]
+fn open_project_session(path: String) -> bool {
+    use windows::core::{w, HSTRING};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    if !std::path::Path::new(&path).is_dir() {
+        return false;
+    }
+    let url = format!("claude://code/new?folder={}&source=coucou", projects::url_encode(&path));
+    let result = unsafe {
+        ShellExecuteW(None, w!("open"), &HSTRING::from(url), None, None, SW_SHOWNORMAL)
+    };
+    result.0 as usize > 32
+}
+
+/// Resumes a conversation in Windows Terminal and tells it to carry on: what
+/// "Continuar" does once a usage limit is over. The Claude app cannot be fed a
+/// message from outside, the CLI can (`claude --resume <id> "<prompt>"`).
+///
+/// The folder comes from the transcript (where the session started), because
+/// Claude Code only finds a session from its own folder. The command goes into a
+/// small script so the prompt never has to survive nested quoting between
+/// Windows Terminal and cmd. Returns false when anything does not check out, so
+/// the island can fall back to opening the conversation.
+#[tauri::command]
+fn continue_session(session_id: String) -> bool {
+    use windows::core::{w, HSTRING};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    // Characters cmd or a quoted argument would read as syntax.
+    let unsafe_char = |s: &str| s.chars().any(|c| matches!(c, '"' | '%' | '^' | '&' | '<' | '>' | '|' | '!'));
+
+    let Some(transcript) = sessions::find_transcript(&session_id) else { return false };
+    let Some(cwd) = sessions::original_cwd(&transcript) else { return false };
+    let dir = cwd.trim_end_matches(['\\', '/']);
+    if dir.is_empty() || unsafe_char(dir) || !std::path::Path::new(dir).is_dir() {
+        return false;
+    }
+
+    let script = settings::local_dir().join("resume.cmd");
+    let script_path = script.to_string_lossy().to_string();
+    if unsafe_char(&script_path) {
+        return false;
+    }
+    // The id was validated as a UUID by find_transcript, so it is plain hex and dashes.
+    let body = format!(
+        "@echo off\r\ntitle Claude - continuar\r\nclaude --resume {session_id} \"Continua donde te quedaste\"\r\n"
+    );
+    if std::fs::create_dir_all(settings::local_dir()).is_err() || std::fs::write(&script, body).is_err() {
+        return false;
+    }
+
+    let params = HSTRING::from(format!("-d \"{dir}\" cmd /k call \"{script_path}\""));
+    let result = unsafe {
+        ShellExecuteW(None, w!("open"), w!("wt.exe"), &params, None, SW_SHOWNORMAL)
+    };
+    result.0 as usize > 32
 }
 
 /// 8-4-4-4-12 hex, the shape of a Claude Code session id.
@@ -469,6 +552,10 @@ pub fn run() {
             open_in_vscode,
             open_claude_session,
             recent_sessions,
+            list_projects,
+            usage_summary,
+            open_project_session,
+            continue_session,
             quit_app,
             hooks_status,
             hooks_preview,
@@ -506,6 +593,7 @@ pub fn run() {
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
+            hotkey::start(handle.clone());
             integrations::start(handle.clone());
             Ok(())
         })

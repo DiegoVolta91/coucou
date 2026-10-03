@@ -2,7 +2,7 @@
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
 import { Tracked, Spring, clamp } from "../core/anim";
-import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
+import { Bridge, IS_TAURI, onDragDrop, onEvent } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
   ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
@@ -20,6 +20,7 @@ import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../vie
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 import { releaseApproval } from "./hooks";
+import { continueSession } from "../core/panels";
 
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -116,6 +117,7 @@ export class Island {
         const cwd = State.focusTask?.sessionCwd ?? null;
         void Bridge.openInVSCode(cwd);
       },
+      continueSession: () => this.continueLimited(),
       openSession: (kind) => {
         const task = State.focusTask;
         // The conversation that is waiting for you, else the one that spoke last.
@@ -353,6 +355,31 @@ export class Island {
     this.fsm.reveal();
   }
 
+  /** Resumes the conversation a usage limit stopped, and lets the island get out of the way. */
+  private continueLimited() {
+    const session = State.sessions.find((s) => s.status === "limit");
+    if (!session) return;
+    Sound.play("approve");
+    this.engine.triggerEmote("happy");
+    void continueSession(session.id, session.cwd || null);
+    // The row says "working" again as soon as Claude's first hook arrives.
+    State.touchSession(session.id, { status: "working", note: undefined });
+    State.updateTask("integration_claude", "working");
+    State.setPillBadge("integration_claude", null);
+    this.setView(State.defaultView());
+  }
+
+  /** Win+Alt+C: open the island on the overview, or close it when it is open. */
+  private toggleFromHotkey() {
+    if (State.paused) return;
+    if (State.mode === "expanded") {
+      this.collapse();
+      return;
+    }
+    State.isPinned = false;
+    this.alert(State.defaultView());
+  }
+
   /** An alert stopped waiting for an answer: let the island auto-close again. */
   dropPin() {
     this.fsm.pinned = false;
@@ -559,6 +586,16 @@ export class Island {
       }
       if (this.isBotHit(e.clientX, e.clientY)) {
         this.cancelBotHover();
+        // Poking Mochi after a usage limit means "the limit is over, carry on".
+        // Only while Mochi really is in the limit state, so a stale list entry
+        // can never turn a playful poke into a terminal.
+        if (
+          State.focusTask?.state === "ratelimit" &&
+          State.sessions.some((s) => s.status === "limit")
+        ) {
+          this.continueLimited();
+          return;
+        }
         this.engine.slap();
       }
     });
@@ -569,6 +606,7 @@ export class Island {
     });
 
     void onDragDrop((e) => this.onDragDrop(e));
+    void onEvent("hotkey", () => this.toggleFromHotkey());
 
     // Outside Tauri (plain browser) drive the cursor from DOM events so the
     // island can be inspected with `npm run dev`.

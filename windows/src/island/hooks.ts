@@ -4,6 +4,7 @@
 // terminal (Windows Terminal, VS Code, PowerShell…) and all of them are handled.
 
 import { Bridge, onEvent } from "../core/bridge";
+import { refreshUsage } from "../core/panels";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
@@ -50,6 +51,9 @@ interface HookPayload {
   tool_input?: Record<string, unknown>;
   /** Notification: permission_prompt, idle_prompt, elicitation_dialog… */
   notification_type?: string;
+  /** StopFailure: why the turn failed ("rate_limit", "authentication_failed"…). */
+  error?: string;
+  error_details?: string;
 }
 
 const PROJECT_ALIASES: Record<string, string> = {
@@ -147,6 +151,20 @@ function clearSession() {
 const firstLine = (text: string | undefined, max: number) =>
   (text ?? "").trim().split(/\r?\n/)[0].slice(0, max);
 
+/** The text Claude Code shows when the usage or rate limit is reached. */
+function isLimitText(text: string | undefined): boolean {
+  return /rate[ _-]?limit|usage limit|limit reached|limit will reset|l[ií]mite de uso/i.test(text ?? "");
+}
+
+function isRateLimit(payload: HookPayload): boolean {
+  return (
+    payload.error === "rate_limit" ||
+    isLimitText(payload.error_details) ||
+    isLimitText(payload.message) ||
+    isLimitText(payload.last_assistant_message)
+  );
+}
+
 /** A notification that actually needs a human answer. */
 function isQuestion(payload: HookPayload): boolean {
   return (payload.message ?? "").endsWith("?") || payload.notification_type === "elicitation_dialog";
@@ -182,7 +200,10 @@ function trackSession(
       patch.note = "Pide permiso";
       break;
     case "Notification":
-      if (isQuestion(payload)) {
+      if (isLimitText(payload.message)) {
+        patch.status = "limit";
+        patch.note = "Límite alcanzado";
+      } else if (isQuestion(payload)) {
         patch.status = "waiting";
         patch.note = "Espera tu respuesta";
       } else {
@@ -196,6 +217,15 @@ function trackSession(
       if (summary) patch.detail = summary;
       break;
     }
+    case "StopFailure":
+      if (isRateLimit(payload)) {
+        patch.status = "limit";
+        patch.note = "Límite alcanzado";
+      } else {
+        patch.status = "finished";
+        patch.note = "Se detuvo por un error";
+      }
+      break;
     case "SessionEnd":
       patch.status = "ended";
       break;
@@ -234,6 +264,8 @@ export async function refreshSessions(force = false) {
 
 export function registerHookHandlers(island: Island) {
   void refreshSessions(true);
+  // The first scan of the transcripts can take a moment; do it before it is asked for.
+  void refreshUsage(true);
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
 }
 
@@ -308,7 +340,7 @@ function handleHook(island: Island, payload: HookPayload) {
     case "Notification": {
       const message = payload.message ?? "";
       const lower = message.toLowerCase();
-      if (lower.includes("rate limit") || lower.includes("limite d")) {
+      if (lower.includes("rate limit") || lower.includes("limite d") || isLimitText(message)) {
         State.updateTask(CLAUDE_ID, "ratelimit");
         Sound.play("rate");
       } else if (isQuestion(payload)) {
@@ -343,12 +375,22 @@ function handleHook(island: Island, payload: HookPayload) {
       }, 5200);
       break;
 
-    case "StopFailure":
-      State.updateTask(CLAUDE_ID, "error");
-      Sound.play("error");
+    case "StopFailure": {
+      // A usage limit is not a crash: the session is waiting for the limit to end
+      // and can be picked up again from the card ("Continuar").
+      const limited = isRateLimit(payload);
+      State.updateTask(CLAUDE_ID, limited ? "ratelimit" : "error");
+      if (limited) {
+        State.appendStep(
+          CLAUDE_ID,
+          firstLine(payload.error_details ?? payload.message, 100) || "Límite de uso alcanzado",
+        );
+      }
+      Sound.play(limited ? "rate" : "error");
       if (focused) surface("error", true);
       else State.setPillBadge(CLAUDE_ID, "error");
       break;
+    }
 
     case "SessionEnd":
       State.updateTask(CLAUDE_ID, "idle");

@@ -65,6 +65,18 @@ export const Bridge = {
   recentSessions: (limit: number) =>
     call<RecentSessionDto[]>("recent_sessions", { limit }),
 
+  /** Resumes a conversation in a terminal and tells Claude to carry on. */
+  continueSession: (sessionId: string) => call<boolean>("continue_session", { sessionId }),
+
+  /** Git repositories in the projects folder. */
+  listProjects: () => call<ProjectDto[]>("list_projects"),
+
+  /** Token usage and estimated cost, from the Claude Code transcripts. */
+  usageSummary: () => call<UsageDto>("usage_summary"),
+
+  /** Starts a new Claude Code session in a folder, through the Claude app. */
+  openProjectSession: (path: string) => call<boolean>("open_project_session", { path }),
+
   quit: () => call<void>("quit_app"),
 
   openSettingsWindow: () => call<void>("open_settings_window"),
@@ -126,6 +138,33 @@ export interface DroppedFile {
   name: string;
   path: string;
   size: number;
+}
+
+export interface ProjectDto {
+  name: string;
+  path: string;
+  branch: string;
+  changes: number;
+  ahead: number;
+  behind: number;
+  lastCommit: number;
+}
+
+export interface UsageBucketDto {
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+  messages: number;
+  /** Estimated, US dollars at API list prices. */
+  cost: number;
+}
+
+export interface UsageDto {
+  today: UsageBucketDto;
+  week: UsageBucketDto;
+  /** The last seven days, oldest first; the last one is today. */
+  days: { cost: number; tokens: number }[];
 }
 
 export interface RecentSessionDto {

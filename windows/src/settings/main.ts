@@ -381,6 +381,17 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  const projectsRoot = h("input", {
+    type: "text",
+    value: settings.projectsRoot ?? "",
+    placeholder: "Automática",
+    style: "width:240px",
+  }) as HTMLInputElement;
+  projectsRoot.addEventListener("change", () => {
+    settings.projectsRoot = projectsRoot.value.trim();
+    void save();
+  });
+
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: "Pantalla principal" }),
@@ -409,6 +420,11 @@ function generalSection(): HTMLElement {
     h("div", { class: "row" },
       h("label", { text: "La isla vive en" }),
       screen,
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Carpeta de proyectos" }),
+      projectsRoot,
+      h("span", { class: "hint", text: "con tus repositorios git" }),
     ),
     h("div", { class: "row" },
       h("label", { text: "Iniciar con Windows" }),

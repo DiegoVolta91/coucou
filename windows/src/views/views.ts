@@ -12,6 +12,8 @@ import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, sessionsCard, type IntegrationCardHooks } from "./integrations";
 import { refreshSessions } from "../island/hooks";
+import { Bridge } from "../core/bridge";
+import { refreshProjects, refreshUsage } from "../core/panels";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -20,6 +22,8 @@ export interface ViewActions {
   openTerminal(): void;
   /** Opens the focused Claude Code conversation in the Claude app (terminal as fallback). */
   openSession(kind: "resume" | "needs-input"): void;
+  /** After a usage limit: resume the stopped conversation and tell Claude to carry on. */
+  continueSession(): void;
   /** The ↗ button: opens whatever the focused pill points at. */
   openTarget(): void;
   openUrl(url: string): void;
@@ -84,6 +88,8 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const tabHome = h("button", { class: "tab", title: "Resumen", onclick: () => go("overview") }, svg(ICONS.house, 13));
   const tabChat = h("button", { class: "tab", title: "Preguntar", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
   const tabDrop = h("button", { class: "tab", title: "Soltar", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const tabProjects = h("button", { class: "tab", title: "Proyectos", onclick: () => go("projects") }, svg(ICONS.folder, 13));
+  const tabUsage = h("button", { class: "tab", title: "Uso", onclick: () => go("usage") }, svg(ICONS.chart, 13));
 
   const gearBtn = h("button", { title: "Ajustes", onclick: () => go("settings") }, svg(ICONS.gear, 14));
   const soundBtn = h("button", { title: "Silenciar", onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
@@ -96,7 +102,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabChat, tabDrop, tabProjects, tabUsage),
     h("div", { class: "header-actions" }, gearBtn, soundBtn),
   );
 
@@ -107,6 +113,8 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");
+      tabProjects.classList.toggle("on", v === "projects");
+      tabUsage.classList.toggle("on", v === "usage");
       gearBtn.classList.toggle("on", v === "settings");
       clear(gearBtn);
       gearBtn.append(svg(v === "settings" ? ICONS.gearFill : ICONS.gear, 14));
@@ -380,19 +388,45 @@ function buildError(actions: ViewActions): ViewHost {
   const who = h("div");
   const title = h("div", { class: "title", text: "El workflow se detuvo." });
   const detail = h("div", { class: "detail" });
-  const row = h("div", { class: "actions" },
-    btn("Reintentar", "primary", () => actions.setView(State.defaultView())),
-    btn("Abrir en n8n", "secondary", () => actions.openUrl("")),
-  );
+  const row = h("div", { class: "actions" });
   const el = h("div", { class: "view" }, card("red", stack(116, 16, who, title, detail, row)));
+  let rowKey = "";
   return {
     el,
     sync() {
       const task = State.focusTask;
+      const isClaude = task?.source !== "n8n";
+      const limited = isClaude && (task?.state === "ratelimit" || State.sessions.some((s) => s.status === "limit"));
       clear(who);
-      who.append(agentWho(task, task?.source === "n8n" ? "n8n" : "Claude Code"));
-      title.textContent = task?.source === "n8n" ? "El workflow se detuvo." : "La sesión se detuvo por un error.";
+      who.append(agentWho(task, isClaude ? "Claude Code" : "n8n"));
+      title.textContent = !isClaude
+        ? "El workflow se detuvo."
+        : limited
+          ? "Alcanzaste el límite de uso."
+          : "La sesión se detuvo por un error.";
       detail.textContent = task?.steps.at(-1) ?? "Sin detalles disponibles.";
+      // Built once per variant: rebuilding buttons between a mouse-down and a
+      // mouse-up would swallow the click.
+      const key = !isClaude ? "n8n" : limited ? "limit" : "claude";
+      if (key === rowKey) return;
+      rowKey = key;
+      clear(row);
+      if (!isClaude) {
+        row.append(
+          btn("Reintentar", "primary", () => actions.setView(State.defaultView())),
+          btn("Abrir en n8n", "secondary", () => actions.openUrl("")),
+        );
+      } else if (limited) {
+        row.append(
+          btn("Continuar", "primary", () => actions.continueSession()),
+          btn("Abrir conversación", "secondary", () => actions.openSession("resume")),
+        );
+      } else {
+        row.append(
+          btn("Abrir conversación", "primary", () => actions.openSession("resume")),
+          btn("OK", "secondary", () => actions.collapse()),
+        );
+      }
     },
   };
 }
@@ -438,6 +472,127 @@ function buildNote(): ViewHost {
     el,
     sync() {
       title.textContent = State.noteMessage ?? "";
+    },
+  };
+}
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+const MAX_PROJECT_ROWS = 4;
+
+/** Git repositories of the projects folder; a click starts Claude in one. */
+function buildProjects(): ViewHost {
+  const head = h("div", { class: "panel-head" });
+  const list = h("div", { class: "proj-list" });
+  const el = h("div", { class: "view" }, card(null, stack(84, 16, head, list)));
+  return {
+    el,
+    tick() {
+      void refreshProjects();
+    },
+    sync() {
+      const all = State.projects;
+      clear(head);
+      head.append(
+        h("b", { text: "Proyectos" }),
+        h("span", { text: all.length ? `${all.length} repos · clic para abrir Claude` : "" }),
+      );
+      clear(list);
+      if (all.length === 0) {
+        list.append(h("div", { class: "panel-empty", text: "No encuentro repositorios git. Elige la carpeta en Ajustes." }));
+        return;
+      }
+      for (const p of all.slice(0, MAX_PROJECT_ROWS)) {
+        const dirty = p.changes > 0;
+        const color = dirty ? "#F5A524" : p.behind > 0 ? "#38BDF8" : "#22C55E";
+        const status = [
+          dirty ? `${p.changes} cambio${p.changes === 1 ? "" : "s"}` : "limpio",
+          p.ahead ? `↑${p.ahead}` : "",
+          p.behind ? `↓${p.behind}` : "",
+        ].filter(Boolean).join(" ");
+        const row = h(
+          "div",
+          { class: "proj-row", title: "Abrir una sesión nueva de Claude en esta carpeta" },
+          dot(color, 5),
+          h("span", { class: "proj-name", text: p.name }),
+          h("span", { class: "proj-branch", text: p.branch }),
+          h("span", { class: dirty ? "proj-status dirty" : "proj-status", text: status }),
+        );
+        row.addEventListener("click", () => void Bridge.openProjectSession(p.path));
+        list.append(row);
+      }
+      if (all.length > MAX_PROJECT_ROWS) {
+        list.append(h("div", { class: "panel-more", text: `+${all.length - MAX_PROJECT_ROWS} más` }));
+      }
+    },
+  };
+}
+
+// ── Usage ─────────────────────────────────────────────────────────────────────
+
+const WEEKDAY_LETTERS = ["D", "L", "M", "X", "J", "V", "S"];
+
+function money(value: number): string {
+  return `$${value.toFixed(value < 10 ? 2 : 0)}`;
+}
+
+function tokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)} k`;
+  return String(n);
+}
+
+/** Today and the last week: estimated cost at API prices, tokens, and a bar per day. */
+function buildUsage(): ViewHost {
+  const head = h("div", { class: "panel-head" });
+  const stats = h("div", { class: "usage-stats" });
+  const bars = h("div", { class: "usage-bars" });
+  const el = h(
+    "div",
+    { class: "view" },
+    card(null, stack(84, 16, head, h("div", { class: "usage-body" }, stats, bars))),
+  );
+  return {
+    el,
+    tick() {
+      void refreshUsage();
+    },
+    sync() {
+      const u = State.usage;
+      clear(head);
+      head.append(
+        h("b", { text: "Uso" }),
+        h("span", { text: "estimado a precios de API" }),
+      );
+      clear(stats);
+      clear(bars);
+      if (!u) {
+        stats.append(h("div", { class: "panel-empty", text: "Calculando…" }));
+        return;
+      }
+      const stat = (label: string, cost: number, detail: string) =>
+        h(
+          "div",
+          { class: "usage-stat" },
+          h("span", { class: "usage-label", text: label }),
+          h("span", { class: "usage-cost", text: money(cost) }),
+          h("span", { class: "usage-detail", text: detail }),
+        );
+      stats.append(
+        stat("Hoy", u.today.cost, `${tokens(u.today.input + u.today.output + u.today.cacheWrite + u.today.cacheRead)} tokens`),
+        stat("7 días", u.week.cost, `${u.week.messages} respuestas`),
+      );
+      const max = Math.max(...u.days.map((d) => d.cost), 0.0001);
+      const today = new Date();
+      u.days.forEach((d, i) => {
+        const date = new Date(today.getTime() - (u.days.length - 1 - i) * 86_400_000);
+        const bar = h("div", { class: i === u.days.length - 1 ? "usage-bar today" : "usage-bar" });
+        bar.style.height = `${Math.max(4, Math.round((d.cost / max) * 100))}%`;
+        bar.title = `${money(d.cost)} · ${tokens(d.tokens)} tokens`;
+        bars.append(
+          h("div", { class: "usage-col" }, bar, h("span", { text: WEEKDAY_LETTERS[date.getDay()] })),
+        );
+      });
     },
   };
 }
@@ -534,6 +689,8 @@ export function buildViews(
   map.set("confused", buildConfused());
   map.set("note", buildNote());
   map.set("settings", buildSettings(actions));
+  map.set("projects", buildProjects());
+  map.set("usage", buildUsage());
   map.set("prompt", buildPrompt(onChatHeightChange));
   map.set("upload", buildUpload());
   map.set("uploading", buildUploading());

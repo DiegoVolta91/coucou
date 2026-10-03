@@ -37,6 +37,41 @@ fn projects_dir() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".claude").join("projects"))
 }
 
+/// How much of the start of a transcript is looked at for the original folder.
+const HEAD_BYTES: u64 = 128 * 1024;
+
+/// The transcript of a session, wherever Claude Code filed it. `id` must be a
+/// UUID: it becomes part of a path, so nothing else is ever looked up.
+pub fn find_transcript(id: &str) -> Option<PathBuf> {
+    if !is_uuid(id) {
+        return None;
+    }
+    let root = projects_dir()?;
+    for project in std::fs::read_dir(root).ok()?.flatten() {
+        let candidate = project.path().join(format!("{id}.jsonl"));
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// The folder a conversation was started in: the first `cwd` its transcript
+/// records. Resuming from that folder is what makes Claude Code find the session
+/// again, even if the session wandered into other folders afterwards.
+pub fn original_cwd(transcript: &Path) -> Option<String> {
+    let file = std::fs::File::open(transcript).ok()?;
+    let mut bytes = Vec::new();
+    file.take(HEAD_BYTES).read_to_end(&mut bytes).ok()?;
+    String::from_utf8_lossy(&bytes).lines().find_map(|line| {
+        serde_json::from_str::<Value>(line)
+            .ok()?
+            .get("cwd")?
+            .as_str()
+            .map(str::to_string)
+    })
+}
+
 /// 8-4-4-4-12 hex, the shape of a Claude Code session id (and of its file name).
 fn is_uuid(s: &str) -> bool {
     let parts: Vec<&str> = s.split('-').collect();

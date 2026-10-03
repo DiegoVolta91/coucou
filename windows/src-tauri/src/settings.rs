@@ -20,6 +20,10 @@ pub struct Settings {
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
+    /// Folder whose git repositories the "Proyectos" panel lists. Empty means
+    /// the first of the usual places that exists.
+    #[serde(default)]
+    pub projects_root: String,
 }
 
 fn default_model() -> String {
@@ -43,6 +47,7 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
+            projects_root: String::new(),
         }
     }
 }
